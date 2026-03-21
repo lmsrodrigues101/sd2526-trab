@@ -16,7 +16,7 @@ public interface Users {
 	 * @param user - User to be created
 	 * @return (OK, the address of the user: name@domain)
 	 * FORBIDDEN if the domain in the user does not match the domain of the server;
-	 * CONFLICT if the name is already associated with a different user (i.e., password or display name differ);
+	 * CONFLICT if the name is already associated with a different userdiffer); (i.e., password or display name
 	 * BAD_REQUEST if the parameters are invalid (eg., null parameters, or a malformed user).
 	 */
 	Result<String> postUser(User user);

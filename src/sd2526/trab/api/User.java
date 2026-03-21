@@ -1,9 +1,14 @@
 package sd2526.trab.api;
 
+import jakarta.persistence.Entity;
+
+import jakarta.persistence.Id;
 /**
  * Represents a user in the system.
  */
+@Entity
 public class User {
+    @Id
     private String name;	
     private String pwd;
     private String domain;
