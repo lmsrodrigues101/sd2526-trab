@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.logging.Logger;
 
 import jakarta.inject.Singleton;
+import jakarta.ws.rs.Path;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response.Status;
 
@@ -12,6 +13,7 @@ import sd2526.trab.api.rest.RestUsers;
 import sd2526.trab.api.server.persistence.Hibernate;
 
 @Singleton
+@Path(RestUsers.PATH)
 public class UsersResource implements RestUsers {
 
     private final Hibernate hibernate;

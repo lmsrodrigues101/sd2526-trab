@@ -68,7 +68,7 @@ public class MessagesResource implements RestMessages {
             if (msg.getInboxUsers() == null || msg.getInboxUsers().isEmpty()) {
                 msg.setInboxUsers(msg.getDestination());
             }
-            hibernate.update(msg);
+            hibernate.persist(msg);
             return msg.getId();
 
         } catch( Exception e){

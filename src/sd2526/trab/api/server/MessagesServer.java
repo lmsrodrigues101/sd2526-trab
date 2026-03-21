@@ -27,7 +27,7 @@ public class MessagesServer {
             String domain = args.length > 0 ? args[0] : "fct";
 
             // Para testes locais, dizemos ao MessagesServer onde está o UsersServer
-            String usersServerUri = "http://localhost:8080/rest";
+            String usersServerUri = "http://192.168.1.44:8080/rest";
 
             ResourceConfig config = new ResourceConfig();
             // Registamos o recurso passando o domínio E o URI do servidor de users
