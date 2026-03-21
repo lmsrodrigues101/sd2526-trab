@@ -1,4 +1,5 @@
-package sd2526.trab.api.server.clients.rest;
+package sd2526.trab.api.server.clients.rest; // Ajusta o pacote conforme a tua estrutura
+
 import java.net.URI;
 import java.util.List;
 import java.util.logging.Logger;
@@ -15,29 +16,27 @@ import jakarta.ws.rs.core.Response.Status;
 import org.glassfish.jersey.client.ClientConfig;
 import org.glassfish.jersey.client.ClientProperties;
 
+import sd2526.trab.api.Message;
+import sd2526.trab.api.java.Messages;
 import sd2526.trab.api.java.Result;
 import sd2526.trab.api.java.Result.ErrorCode;
-import sd2526.trab.api.java.Users;
-import sd2526.trab.api.User;
-import sd2526.trab.api.rest.RestUsers;
+import sd2526.trab.api.rest.RestMessages;
 
-public class RestUsersClient implements Users {
+public class RestMessagesClient implements Messages {
 
-    private static Logger Log = Logger.getLogger(RestUsersClient.class.getName());
+    private static Logger Log = Logger.getLogger(RestMessagesClient.class.getName());
 
     protected static final int READ_TIMEOUT = 5000;
     protected static final int CONNECT_TIMEOUT = 5000;
-
     protected static final int MAX_RETRIES = 3;
     protected static final int RETRY_SLEEP = 5000;
 
     final URI serverURI;
     final Client client;
     final ClientConfig config;
-
     final WebTarget target;
 
-    public RestUsersClient(URI serverURI) {
+    public RestMessagesClient(URI serverURI) {
         this.serverURI = serverURI;
         this.config = new ClientConfig();
 
@@ -45,27 +44,28 @@ public class RestUsersClient implements Users {
         config.property(ClientProperties.CONNECT_TIMEOUT, CONNECT_TIMEOUT);
 
         this.client = ClientBuilder.newClient(config);
-        this.target = client.target(serverURI).path(RestUsers.PATH);
+        this.target = client.target(serverURI).path(RestMessages.PATH);
     }
 
     @Override
-    public Result<String> postUser(User user) {
-        for(int i = 0; i < MAX_RETRIES ; i++) {
+    public Result<String> postMessage(String pwd, Message msg) {
+        for (int i = 0; i < MAX_RETRIES; i++) {
             try {
-                Response r = target.request()
+                Response r = target.queryParam(RestMessages.PWD, pwd)
+                        .request()
                         .accept(MediaType.APPLICATION_JSON)
-                        .post(Entity.entity(user, MediaType.APPLICATION_JSON));
+                        .post(Entity.entity(msg, MediaType.APPLICATION_JSON));
 
                 int status = r.getStatus();
-                if( status != Status.OK.getStatusCode() )
+                if (status != Status.OK.getStatusCode())
                     return Result.error(getErrorCodeFrom(status));
                 else
                     return Result.ok(r.readEntity(String.class));
 
-            } catch( ProcessingException x ) {
+            } catch (ProcessingException x) {
                 Log.info(x.getMessage());
                 try { Thread.sleep(RETRY_SLEEP); } catch (InterruptedException e) {}
-            } catch( Exception x ) {
+            } catch (Exception x) {
                 x.printStackTrace();
             }
         }
@@ -73,24 +73,25 @@ public class RestUsersClient implements Users {
     }
 
     @Override
-    public Result<User> getUser(String name, String pwd) {
-        for(int i = 0; i < MAX_RETRIES ; i++) {
+    public Result<Message> getInboxMessage(String name, String mid, String pwd) {
+        for (int i = 0; i < MAX_RETRIES; i++) {
             try {
-                Response r = target.path(name)
-                        .queryParam(RestUsers.PWD, pwd).request()
+                Response r = target.path(RestMessages.MBOX).path(name).path(mid)
+                        .queryParam(RestMessages.PWD, pwd)
+                        .request()
                         .accept(MediaType.APPLICATION_JSON)
                         .get();
 
                 int status = r.getStatus();
-                if( status != Status.OK.getStatusCode() )
+                if (status != Status.OK.getStatusCode())
                     return Result.error(getErrorCodeFrom(status));
                 else
-                    return Result.ok(r.readEntity(User.class));
+                    return Result.ok(r.readEntity(Message.class));
 
-            } catch( ProcessingException x ) {
+            } catch (ProcessingException x) {
                 Log.info(x.getMessage());
                 try { Thread.sleep(RETRY_SLEEP); } catch (InterruptedException e) {}
-            } catch( Exception x ) {
+            } catch (Exception x) {
                 x.printStackTrace();
             }
         }
@@ -98,25 +99,32 @@ public class RestUsersClient implements Users {
     }
 
     @Override
-    public Result<User> updateUser(String name, String pwd, User info) {
-        for(int i = 0; i < MAX_RETRIES ; i++) {
+    public Result<List<String>> getAllInboxMessages(String name, String pwd) {
+        // it's the same as searchInbox just the query empty
+        return searchInbox(name, pwd, "");
+    }
+
+    @Override
+    public Result<List<String>> searchInbox(String name, String pwd, String query) {
+        for (int i = 0; i < MAX_RETRIES; i++) {
             try {
-                Response r = target.path(name)
-                        .queryParam(RestUsers.PWD, pwd)
+                Response r = target.path(RestMessages.MBOX).path(name)
+                        .queryParam(RestMessages.PWD, pwd)
+                        .queryParam(RestMessages.QUERY, query)
                         .request()
                         .accept(MediaType.APPLICATION_JSON)
-                        .put(Entity.entity(info, MediaType.APPLICATION_JSON));
+                        .get();
 
                 int status = r.getStatus();
-                if( status != Status.OK.getStatusCode() )
+                if (status != Status.OK.getStatusCode())
                     return Result.error(getErrorCodeFrom(status));
                 else
-                    return Result.ok(r.readEntity(User.class));
+                    return Result.ok(r.readEntity(new GenericType<List<String>>() {}));
 
-            } catch( ProcessingException x ) {
+            } catch (ProcessingException x) {
                 Log.info(x.getMessage());
                 try { Thread.sleep(RETRY_SLEEP); } catch (InterruptedException e) {}
-            } catch( Exception x ) {
+            } catch (Exception x) {
                 x.printStackTrace();
             }
         }
@@ -124,24 +132,24 @@ public class RestUsersClient implements Users {
     }
 
     @Override
-    public Result<User> deleteUser(String name, String pwd) {
-        for(int i = 0; i < MAX_RETRIES ; i++) {
+    public Result<Void> removeInboxMessage(String name, String mid, String pwd) {
+        for (int i = 0; i < MAX_RETRIES; i++) {
             try {
-                Response r = target.path(name)
-                        .queryParam(RestUsers.PWD, pwd).request()
-                        .accept(MediaType.APPLICATION_JSON)
+                Response r = target.path(RestMessages.MBOX).path(name).path(mid)
+                        .queryParam(RestMessages.PWD, pwd)
+                        .request()
                         .delete();
 
                 int status = r.getStatus();
-                if( status != Status.OK.getStatusCode() )
+                if (status != Status.NO_CONTENT.getStatusCode() && status != Status.OK.getStatusCode())
                     return Result.error(getErrorCodeFrom(status));
                 else
-                    return Result.ok(r.readEntity(User.class));
+                    return Result.ok();
 
-            } catch( ProcessingException x ) {
+            } catch (ProcessingException x) {
                 Log.info(x.getMessage());
                 try { Thread.sleep(RETRY_SLEEP); } catch (InterruptedException e) {}
-            } catch( Exception x ) {
+            } catch (Exception x) {
                 x.printStackTrace();
             }
         }
@@ -149,26 +157,24 @@ public class RestUsersClient implements Users {
     }
 
     @Override
-    public Result<List<User>> searchUsers(String name, String pwd, String pattern) {
-        for(int i = 0; i < MAX_RETRIES ; i++) {
+    public Result<Void> deleteMessage(String name, String mid, String pwd) {
+        for (int i = 0; i < MAX_RETRIES; i++) {
             try {
-                Response r = target.queryParam(RestUsers.NAME, name)
-                        .queryParam(RestUsers.PWD, pwd)
-                        .queryParam(RestUsers.QUERY, pattern)
+                Response r = target.path(name).path(mid)
+                        .queryParam(RestMessages.PWD, pwd)
                         .request()
-                        .accept(MediaType.APPLICATION_JSON)
-                        .get();
+                        .delete();
 
                 int status = r.getStatus();
-                if( status != Status.OK.getStatusCode() )
+                if (status != Status.NO_CONTENT.getStatusCode() && status != Status.OK.getStatusCode())
                     return Result.error(getErrorCodeFrom(status));
                 else
-                    return Result.ok(r.readEntity(new GenericType<List<User>>() {}));
+                    return Result.ok();
 
-            } catch( ProcessingException x ) {
+            } catch (ProcessingException x) {
                 Log.info(x.getMessage());
                 try { Thread.sleep(RETRY_SLEEP); } catch (InterruptedException e) {}
-            } catch( Exception x ) {
+            } catch (Exception x) {
                 x.printStackTrace();
             }
         }
@@ -177,7 +183,7 @@ public class RestUsersClient implements Users {
 
     public static ErrorCode getErrorCodeFrom(int status) {
         return switch (status) {
-            case 200, 204 -> ErrorCode.OK; // 204 No Content também é sucesso
+            case 200, 204 -> ErrorCode.OK;
             case 409 -> ErrorCode.CONFLICT;
             case 403 -> ErrorCode.FORBIDDEN;
             case 404 -> ErrorCode.NOT_FOUND;
