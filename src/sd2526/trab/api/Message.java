@@ -4,15 +4,26 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
+import jakarta.persistence.ElementCollection;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.Id;
+
 /**
  * Represents a message in the system.
  */
+@Entity
 public class Message {
-
+	@Id
 	private String id;	
 	private String sender;
-	
+
+	@ElementCollection(fetch = FetchType.EAGER)
 	private Set<String> destination;
+
+	@ElementCollection(fetch = FetchType.EAGER)
+	private Set<String> inboxUsers;
+
 	private long creationTime;
 	private String subject;	
 	private String contents;
@@ -39,7 +50,8 @@ public class Message {
 		this.subject = subject;
 		this.contents = contents;
 		this.creationTime = System.currentTimeMillis();
-		this.destination = new HashSet<String>(destinations);
+		this.destination = new HashSet<>(destinations);
+		this.inboxUsers = new HashSet<>(destinations);
 	}
 
 	public String getSender() {
@@ -57,6 +69,10 @@ public class Message {
 	public void setDestination(Set<String> destination) {
 		this.destination = destination;
 	}
+
+	public Set<String> getInboxUsers() {return inboxUsers;}
+
+	public void setInboxUsers(Set<String> inboxUsers) {this.inboxUsers = inboxUsers;}
 	
 	public void addDestination(String destination) {
 		this.destination.add(destination);
