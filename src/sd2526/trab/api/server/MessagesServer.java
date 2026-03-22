@@ -7,6 +7,7 @@ import java.util.logging.Logger;
 import org.glassfish.jersey.jdkhttp.JdkHttpServerFactory;
 import org.glassfish.jersey.server.ResourceConfig;
 
+import sd2526.trab.api.Discovery;
 import sd2526.trab.api.server.resources.MessagesResource;
 
 public class MessagesServer {
@@ -26,15 +27,23 @@ public class MessagesServer {
         try {
             String domain = args.length > 0 ? args[0] : "fct";
 
+            String ip = InetAddress.getLocalHost().getHostAddress();
+            String serverURI = String.format(SERVER_URI_FMT, ip, PORT);
+
+            Discovery discovery = new Discovery(Discovery.DISCOVERY_ADDR, SERVICE, serverURI, domain);
+            discovery.start();
+
+            Log.info("Searching server from Users from domain " + domain + "...");
+
             // Para testes locais, dizemos ao MessagesServer onde está o UsersServer
-            String usersServerUri = "http://192.168.1.44:8080/rest";
+            URI[] usersUris = discovery.knownUrisOf("Users", domain);
+            String usersServerUri = usersUris[0].toString();
+
+            Log.info("Server from Users found in: " + usersServerUri);
 
             ResourceConfig config = new ResourceConfig();
             // Registamos o recurso passando o domínio E o URI do servidor de users
             config.register(new MessagesResource(domain, usersServerUri));
-
-            String ip = InetAddress.getLocalHost().getHostAddress();
-            String serverURI = String.format(SERVER_URI_FMT, ip, PORT);
 
             JdkHttpServerFactory.createHttpServer(URI.create(serverURI), config);
             Log.info(String.format("%s Server ready @ %s (Domain: %s)\n", SERVICE, serverURI, domain));

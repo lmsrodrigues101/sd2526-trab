@@ -7,6 +7,7 @@ import java.util.logging.Logger;
 import org.glassfish.jersey.jdkhttp.JdkHttpServerFactory;
 import org.glassfish.jersey.server.ResourceConfig;
 
+import sd2526.trab.api.Discovery;
 import sd2526.trab.api.server.resources.UsersResource;
 
 public class UsersServer {
@@ -27,11 +28,14 @@ public class UsersServer {
             // Assume o domínio "fct" por defeito se não passarmos argumentos
             String domain = args.length > 0 ? args[0] : "fct";
 
-            ResourceConfig config = new ResourceConfig();
-            config.register(new UsersResource(domain));
-
             String ip = InetAddress.getLocalHost().getHostAddress();
             String serverURI = String.format(SERVER_URI_FMT, ip, PORT);
+
+            Discovery discovery = new Discovery(Discovery.DISCOVERY_ADDR, SERVICE, serverURI, domain);
+            discovery.start();
+
+            ResourceConfig config = new ResourceConfig();
+            config.register(new UsersResource(domain));
 
             JdkHttpServerFactory.createHttpServer(URI.create(serverURI), config);
             Log.info(String.format("%s Server ready @ %s (Domain: %s)\n", SERVICE, serverURI, domain));
