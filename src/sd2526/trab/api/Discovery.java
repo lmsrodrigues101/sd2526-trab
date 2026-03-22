@@ -160,7 +160,7 @@ public class Discovery {
      */
     public URI[] knownUrisOf(String serviceName, String domain) {
         String key = serviceName + "@" + domain;
-        discoveredUris.putIfAbsent(serviceName, java.util.concurrent.ConcurrentHashMap.newKeySet());
+        discoveredUris.putIfAbsent(key, java.util.concurrent.ConcurrentHashMap.newKeySet());
         java.util.Set<URI> uris = discoveredUris.get(key);
 
         synchronized (this) {
