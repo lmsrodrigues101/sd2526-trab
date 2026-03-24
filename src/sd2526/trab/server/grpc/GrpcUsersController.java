@@ -5,10 +5,8 @@ import io.grpc.ServerServiceDefinition;
 import io.grpc.stub.StreamObserver;
 import sd2526.trab.api.User;
 import sd2526.trab.api.java.Users;
-import sd2526.trab.api.java.Result;
 import sd2526.trab.api.grpc.GrpcUsersGrpc;
 import sd2526.trab.api.grpc.Users.*;
-import sd2526.trab.api.grpc.GrpcUsersGrpc;
 import sd2526.trab.api.grpc.DataModelAdaptorUser;
 
 public class GrpcUsersController extends GrpcController implements GrpcUsersGrpc.AsyncService, BindableService {

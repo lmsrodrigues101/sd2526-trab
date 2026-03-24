@@ -19,12 +19,10 @@ public class JavaMessages implements Messages {
 
     private final Hibernate hibernate;
     private final String domain;
-    private final RestUsersClient usersClient;
 
-    public JavaMessages(String domain, String usersServerUri) {
+    public JavaMessages(String domain) {
         this.hibernate = Hibernate.getInstance();
         this.domain = domain;
-        this.usersClient = new RestUsersClient(URI.create(usersServerUri));
     }
 
     @Override
@@ -40,7 +38,7 @@ public class JavaMessages implements Messages {
         }
 
         // Validação com o serviço de Users
-        Result<User> userResult = usersClient.getUser(senderName, pwd);
+        Result<User> userResult = UsersClientFactory.get(domain).getUser(senderName, pwd);
         if (!userResult.isOK()) {
             return Result.error(ErrorCode.FORBIDDEN); // Devolvemos erro em vez de exceção
         }
@@ -74,7 +72,7 @@ public class JavaMessages implements Messages {
             return Result.error(ErrorCode.BAD_REQUEST);
         }
 
-        Result<User> userResult = usersClient.getUser(name, pwd);
+        Result<User> userResult = UsersClientFactory.get(domain).getUser(name, pwd);
         if (!userResult.isOK()) {
             return Result.error(ErrorCode.FORBIDDEN);
         }
@@ -97,7 +95,7 @@ public class JavaMessages implements Messages {
             return Result.error(ErrorCode.BAD_REQUEST);
         }
 
-        Result<User> userResult = usersClient.getUser(name, pwd);
+        Result<User> userResult = UsersClientFactory.get(domain).getUser(name, pwd);
         if (!userResult.isOK()) {
             return Result.error(ErrorCode.FORBIDDEN);
         }
@@ -117,7 +115,7 @@ public class JavaMessages implements Messages {
             return Result.error(ErrorCode.BAD_REQUEST);
         }
 
-        Result<User> userResult = usersClient.getUser(name, pwd);
+        Result<User> userResult = UsersClientFactory.get(domain).getUser(name, pwd);
         if (!userResult.isOK()) {
             return Result.error(ErrorCode.FORBIDDEN);
         }
@@ -142,7 +140,7 @@ public class JavaMessages implements Messages {
             return Result.error(ErrorCode.BAD_REQUEST);
         }
 
-        Result<User> userResult = usersClient.getUser(name, pwd);
+        Result<User> userResult = UsersClientFactory.get(domain).getUser(name, pwd);
         if (!userResult.isOK()) {
             return Result.error(ErrorCode.FORBIDDEN);
         }
@@ -169,7 +167,7 @@ public class JavaMessages implements Messages {
             return Result.error(ErrorCode.BAD_REQUEST);
         }
 
-        Result<User> userResult = usersClient.getUser(name, pwd);
+        Result<User> userResult = UsersClientFactory.get(domain).getUser(name, pwd);
         if (!userResult.isOK()) {
             return Result.error(ErrorCode.FORBIDDEN);
         }

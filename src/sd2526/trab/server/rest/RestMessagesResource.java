@@ -14,8 +14,8 @@ public class RestMessagesResource extends RestResource implements RestMessages {
 
     final Messages impl;
 
-    public RestMessagesResource(String domain, String usersServerUri) {
-        this.impl = new JavaMessages(domain, usersServerUri);
+    public RestMessagesResource(Messages impl) {
+        this.impl = impl;
     }
 
     @Override
