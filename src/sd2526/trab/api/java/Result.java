@@ -1,10 +1,5 @@
 package sd2526.trab.api.java;
 
-import java.util.concurrent.Executors;
-import java.util.function.Consumer;
-import java.util.function.Function;
-import java.util.function.Supplier;
-
 /**
  * 
  * Represents the result of an operation, either wrapping a result of the given type,

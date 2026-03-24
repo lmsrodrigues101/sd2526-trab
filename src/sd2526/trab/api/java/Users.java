@@ -15,7 +15,7 @@ public interface Users {
 	 *  
 	 * @param user - User to be created
 	 * @return (OK, the address of the user: name@domain)
-	 * FORBIDDEN if the domain in the user does not match the domain of the server;
+	 * FORBIDDEN private final String domain;
 	 * CONFLICT if the name is already associated with a different userdiffer); (i.e., password or display name
 	 * BAD_REQUEST if the parameters are invalid (eg., null parameters, or a malformed user).
 	 */
@@ -69,6 +69,6 @@ public interface Users {
 	 * FORBIDDEN if the password is incorrect or the user does not exist 
 	 * BAD_REQUEST if the parameters are invalid (eg., null parameters).
 	 */
-	Result<List<User>> searchUsers(String name, String pwd, String query);	
+	Result<List<User>> searchUsers(String name, String pwd, String query);
 	
 }

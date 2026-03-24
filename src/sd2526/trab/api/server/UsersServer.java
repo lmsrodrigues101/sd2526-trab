@@ -1,47 +1,35 @@
-package sd2526.trab.api.server; // Ajusta para o teu pacote
+package sd2526.trab.api.server;
 
 import java.net.InetAddress;
 import java.net.URI;
 import java.util.logging.Logger;
-
 import org.glassfish.jersey.jdkhttp.JdkHttpServerFactory;
 import org.glassfish.jersey.server.ResourceConfig;
-
 import sd2526.trab.api.Discovery;
-import sd2526.trab.api.server.resources.UsersResource;
+import sd2526.trab.server.rest.RestUsersResource;
 
 public class UsersServer {
-
     private static Logger Log = Logger.getLogger(UsersServer.class.getName());
 
-    static {
-        System.setProperty("java.net.preferIPv4Stack", "true");
-        System.setProperty("java.util.logging.SimpleFormatter.format", "%4$s: %5$s\n");
-    }
-
-    public static final int PORT = 8080;
-    public static final String SERVICE = "Users";
-    private static final String SERVER_URI_FMT = "http://%s:%s/rest";
-
-    public static void main(String[] args) {
-        try {
-            // Assume o domínio "fct" por defeito se não passarmos argumentos
-            String domain = args.length > 0 ? args[0] : "fct";
-
-            String ip = InetAddress.getLocalHost().getHostAddress();
-            String serverURI = String.format(SERVER_URI_FMT, ip, PORT);
-
-            Discovery discovery = new Discovery(Discovery.DISCOVERY_ADDR, SERVICE, serverURI, domain);
-            discovery.start();
-
-            ResourceConfig config = new ResourceConfig();
-            config.register(new UsersResource(domain));
-
-            JdkHttpServerFactory.createHttpServer(URI.create(serverURI), config);
-            Log.info(String.format("%s Server ready @ %s (Domain: %s)\n", SERVICE, serverURI, domain));
-
-        } catch( Exception e) {
-            Log.severe(e.getMessage());
+    public static void main(String[] args) throws Exception {
+        if (args.length < 1) {
+            System.out.println("Usage: java UsersServer <domain>");
+            return;
         }
+        String domain = args[0];
+        String ip = InetAddress.getLocalHost().getHostAddress();
+        String serverURI = String.format("http://%s:8080/rest", ip);
+
+        // 1. Configurar o Recurso REST
+        ResourceConfig config = new ResourceConfig();
+        config.register(new RestUsersResource(domain));
+        JdkHttpServerFactory.createHttpServer(URI.create(serverURI), config);
+
+        // 2. Iniciar o Discovery (Anunciador)
+        // Usamos o construtor completo para este servidor se anunciar na rede
+        Discovery discovery = new Discovery(Discovery.DISCOVERY_ADDR, "Users", serverURI, domain);
+        discovery.start(); // Isto inicia a thread de anúncios e a de receção
+
+        Log.info(String.format("Users Server ready @ %s (Domain: %s)\n", serverURI, domain));
     }
 }
