@@ -5,7 +5,6 @@ import java.util.logging.Logger;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import io.grpc.StatusRuntimeException;
-import jakarta.ws.rs.ProcessingException;
 import sd2526.trab.api.java.Result;
 import sd2526.trab.api.java.Result.ErrorCode;
 
@@ -33,7 +32,7 @@ public class GrpcClient {
         for (int i = 0; i < MAX_RETRIES; i++) {
             try {
                 return func.get();
-            } catch (ProcessingException x) {
+            } catch (StatusRuntimeException e) {
                 try {
                     Thread.sleep(RETRY_SLEEP);
                 } catch (InterruptedException ignored) {

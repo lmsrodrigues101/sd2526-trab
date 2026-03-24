@@ -49,7 +49,7 @@ public class Discovery {
     private final String serviceURI;
     private final String domain;
     private final MulticastSocket ms;
-    private final java.util.Map<String, java.util.Set<URI>> discoveredUris = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.Map<String, java.util.Set<URI>> discoveredUris = new java.util.concurrent.ConcurrentHashMap<>();
     /**
      * @param serviceName the name of the service to announce
      * @param serviceURI  an uri string - representing the contact endpoint of the
@@ -76,6 +76,22 @@ public class Discovery {
 
     public Discovery(InetSocketAddress addr) throws SocketException, UnknownHostException, IOException {
         this(addr, null, null, null);
+    }
+    public static URI[] knownUrisOf(String serviceNameWithDomain, int minReplies) {
+        discoveredUris.putIfAbsent(serviceNameWithDomain, java.util.concurrent.ConcurrentHashMap.newKeySet());
+        var uris = discoveredUris.get(serviceNameWithDomain);
+
+        synchronized (discoveredUris) {
+            while (uris.size() < minReplies) {
+                try {
+                    // Espera até ter o número de respostas pretendido
+                    discoveredUris.wait(1000);
+                } catch (InterruptedException e) {
+                    // ignore
+                }
+            }
+        }
+        return uris.toArray(new URI[0]);
     }
 
     /**

@@ -1,5 +1,6 @@
 package sd2526.trab.server.rest;
 
+import jakarta.ws.rs.Path;
 import sd2526.trab.api.User;
 import sd2526.trab.api.java.Users;
 import sd2526.trab.server.java.JavaUsers;
@@ -7,13 +8,13 @@ import sd2526.trab.api.rest.RestUsers;
 
 import java.util.List;
 
+@Path(RestUsers.PATH)
 public class RestUsersResource extends RestResource implements RestUsers {
 
     final Users impl;
 
-    public RestUsersResource(String domain) {
-
-        this.impl = new JavaUsers(domain);
+    public RestUsersResource(Users impl) {
+        this.impl = impl;
     }
 
     @Override
