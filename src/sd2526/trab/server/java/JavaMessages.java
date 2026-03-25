@@ -10,6 +10,8 @@ import sd2526.trab.api.User;
 import sd2526.trab.api.java.Messages;
 import sd2526.trab.api.java.Result;
 import sd2526.trab.api.java.Result.ErrorCode;
+import sd2526.trab.api.java.Users;
+import sd2526.trab.clients.UsersClientFactory;
 import sd2526.trab.clients.rest.RestUsersClient;
 import sd2526.trab.api.server.persistence.Hibernate;
 

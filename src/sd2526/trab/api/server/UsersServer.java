@@ -1,4 +1,4 @@
-package sd2526.trab.server;
+package sd2526.trab.api.server;
 
 import java.net.InetAddress;
 import java.net.URI;
