@@ -3,15 +3,11 @@ package sd2526.trab.server.rest;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.Response.Status;
 import sd2526.trab.api.java.Result;
-import sd2526.trab.api.java.Result.ErrorCode;
 
-public abstract class RestResource {
+public class RestResource {
 
-    /**
-     * Traduz os erros do nosso Result.ErrorCode para códigos HTTP do Jersey (Status).
-     */
-    protected static Status errorCodeToStatus(ErrorCode error) {
-        return switch (error) {
+    private static Status errorCodeToStatus( Result.ErrorCode error ) {
+        return switch( error) {
             case NOT_FOUND -> Status.NOT_FOUND;
             case CONFLICT -> Status.CONFLICT;
             case FORBIDDEN -> Status.FORBIDDEN;
@@ -21,15 +17,10 @@ public abstract class RestResource {
         };
     }
 
-    /**
-     * Avalia o Result: se estiver OK, devolve o valor. Se der erro, lança a exceção HTTP correspondente.
-     */
-    protected static <T> T unwrapResultOrThrow(Result<T> result) {
-        if (result.isOK()) {
+    protected static <T> T unwrapResultOrThrow( Result<T> result ) {
+        if( result.isOK() )
             return result.value();
-        } else {
-            var status = errorCodeToStatus(result.error());
-            throw new WebApplicationException(status);
-        }
+        else
+            throw new WebApplicationException( errorCodeToStatus( result.error() ) );
     }
 }

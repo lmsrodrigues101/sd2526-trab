@@ -1,4 +1,4 @@
-package sd2526.trab.api.grpc;
+package sd2526.trab.server.util;
 
 import sd2526.trab.api.grpc.Messages.GrpcMessage; // A classe gerada está aqui dentro!
 

@@ -1,20 +1,20 @@
 package sd2526.trab.server.rest;
 
-import jakarta.ws.rs.Path;
 import sd2526.trab.api.User;
 import sd2526.trab.api.java.Users;
-import sd2526.trab.server.java.JavaUsers;
 import sd2526.trab.api.rest.RestUsers;
+import sd2526.trab.clients.UsersRestServer;
+import sd2526.trab.server.java.JavaUsers;
 
 import java.util.List;
 
-@Path(RestUsers.PATH)
+
 public class RestUsersResource extends RestResource implements RestUsers {
 
     final Users impl;
 
-    public RestUsersResource(Users impl) {
-        this.impl = impl;
+    public RestUsersResource() {
+        this.impl = new JavaUsers(UsersRestServer.DOMAIN);
     }
 
     @Override
@@ -28,8 +28,8 @@ public class RestUsersResource extends RestResource implements RestUsers {
     }
 
     @Override
-    public User updateUser(String name, String pwd, User user) {
-        return unwrapResultOrThrow(impl.updateUser(name, pwd, user));
+    public User updateUser(String name, String pwd, User info) {
+        return unwrapResultOrThrow(impl.updateUser(name, pwd, info));
     }
 
     @Override
@@ -38,7 +38,7 @@ public class RestUsersResource extends RestResource implements RestUsers {
     }
 
     @Override
-    public List<User> searchUsers(String name, String pwd, String query) {
-        return unwrapResultOrThrow(impl.searchUsers(name, pwd, query));
+    public List<User> searchUsers(String name, String pwd, String pattern) {
+        return unwrapResultOrThrow(impl.searchUsers(name, pwd, pattern));
     }
 }

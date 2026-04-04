@@ -2,20 +2,21 @@ package sd2526.trab.server.rest;
 
 import java.util.List;
 
-import jakarta.inject.Singleton;
+
 import sd2526.trab.api.Message;
 import sd2526.trab.api.java.Messages;
 import sd2526.trab.api.rest.RestMessages;
+import sd2526.trab.clients.MessagesRestServer;
 import sd2526.trab.server.java.JavaMessages;
 
-@Singleton
+
 public class RestMessagesResource extends RestResource implements RestMessages {
 
 
     final Messages impl;
 
-    public RestMessagesResource(Messages impl) {
-        this.impl = impl;
+    public RestMessagesResource() {
+        this.impl = new JavaMessages(MessagesRestServer.DOMAIN);
     }
 
     @Override

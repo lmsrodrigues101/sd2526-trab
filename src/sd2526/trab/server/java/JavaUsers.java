@@ -1,19 +1,22 @@
 package sd2526.trab.server.java;
 
-import jakarta.validation.ConstraintViolationException;
+
 import sd2526.trab.api.User;
 import java.util.List;
+import java.util.logging.Logger;
 
 import sd2526.trab.api.java.Result;
 import sd2526.trab.api.java.Users;
 import sd2526.trab.api.java.Result.ErrorCode;
 
-import sd2526.trab.api.server.persistence.Hibernate;
-
+import sd2526.trab.clients.UsersRestServer;
+import sd2526.trab.server.persistence.Hibernate;
+import sd2526.trab.server.persistence.TxContext;
 
 
 public class JavaUsers implements Users {
 
+    private static Logger Log = Logger.getLogger(UsersRestServer.class.getName());
     private final Hibernate hibernate;
     private final String domain;
 
@@ -24,58 +27,87 @@ public class JavaUsers implements Users {
 
     @Override
     public Result<String> postUser(User user) {
-        if (user.getName() == null || user.getPwd() == null || user.getDisplayName() == null || user.getDomain() == null) {
+        if (user.getName() == null || user.getName().isBlank() || user.getPwd() == null
+                || user.getPwd().isBlank() || user.getDisplayName() == null || user.getDisplayName().isBlank()
+                || user.getDomain() == null || user.getDomain().isBlank()){
             return Result.error(ErrorCode.BAD_REQUEST);
         }
         if (!user.getDomain().equals(this.domain)) {
             return Result.error(ErrorCode.FORBIDDEN);
         }
-        try {
-            hibernate.persist(user);
-        } catch (ConstraintViolationException e) {
-            return Result.error(ErrorCode.CONFLICT);
-        }catch (Exception e) {
+
+        try (TxContext tx = hibernate.beginTx();){
+            User existingUser = hibernate.getTx(tx, User.class, user.getName());
+            if (existingUser != null) {
+                if (existingUser.getPwd().equals(user.getPwd()) &&
+                        existingUser.getDisplayName().equals(user.getDisplayName())) {
+                    tx.commit();
+                    return Result.ok(user.getName() + "@" + user.getDomain());
+                } else {
+                    return Result.error(ErrorCode.CONFLICT);
+                }
+            }
+            hibernate.persistTx(tx, user);
+            tx.commit();
+            return Result.ok(user.getName() + "@" + user.getDomain());
+        } catch (Exception e) {
+            Log.severe("Erro catastrófico no postUser: " + e.getMessage());
+            e.printStackTrace();
             return Result.error(ErrorCode.INTERNAL_ERROR);
         }
-        return Result.ok(user.getName()+"@"+user.getDomain());
     }
 
 
     @Override
     public Result<User> getUser(String name, String pwd) {
-        if (name == null || pwd == null) return Result.error(ErrorCode.BAD_REQUEST);
-        try {
-            User user = hibernate.get(User.class, name);
-            // user does not exist or password is incorrect
+        if (name == null || pwd == null) {
+            return Result.error(ErrorCode.BAD_REQUEST);
+        }
+        try (TxContext tx = hibernate.beginTx()) {
+            User user = hibernate.getTx(tx, User.class, name);
+
             if (user == null || !user.getPwd().equals(pwd)) {
                 return Result.error(ErrorCode.FORBIDDEN);
             }
+            tx.commit();
             return Result.ok(user);
         } catch (Exception e) {
+            Log.severe("Erro catastrófico no getUser: " + e.getMessage());
             return Result.error(ErrorCode.INTERNAL_ERROR);
         }
     }
 
     @Override
     public Result<User> updateUser(String name, String pwd, User info) {
-        if (name == null || pwd == null || info == null) {
+        if (name == null || name.isBlank() || pwd == null || pwd.isBlank() || info == null
+        || (info.getName() != null && !info.getName().equals(name))
+        || (info.getDomain() != null && !info.getDomain().equals(this.domain))) {
             return Result.error(ErrorCode.BAD_REQUEST);
         }
-        try {
-            User user = hibernate.get(User.class, name);
+        try (TxContext tx = hibernate.beginTx()) {
+            User existingUser = hibernate.getTx(tx, User.class, name);
 
-            if (user == null || !user.getPwd().equals(pwd)) {
+            if (existingUser == null || !existingUser.getPwd().equals(pwd)) {
                 return Result.error(ErrorCode.FORBIDDEN);
             }
+            boolean changed = false;
+            if (info.getPwd() != null && !info.getPwd().isBlank()) {
+                existingUser.setPwd(info.getPwd());
+                changed = true;
+            }
+            if (info.getDisplayName() != null && !info.getDisplayName().isBlank()) {
+                existingUser.setDisplayName(info.getDisplayName());
+                changed = true;
+            }
 
-            if (info.getPwd() != null) user.setPwd(info.getPwd());
-            if (info.getDisplayName() != null) user.setDisplayName(info.getDisplayName());
-            if (info.getDomain() != null) user.setDomain(info.getDomain());
-            
-            hibernate.update(user);
-            return Result.ok(user);
-
+            if (changed) {
+                hibernate.updateTx(tx, existingUser);
+            }
+            tx.commit();
+            return Result.ok(existingUser);
         } catch (Exception e) {
+            Log.severe("Erro catastrófico no updateUser: " + e.getMessage());
+            e.printStackTrace();
             return Result.error(ErrorCode.INTERNAL_ERROR);
         }
     }
@@ -85,17 +117,18 @@ public class JavaUsers implements Users {
         if (name == null || pwd == null) {
             return Result.error(ErrorCode.BAD_REQUEST);
         }
-
-        try {
-            User user = hibernate.get(User.class, name);
+        try (TxContext tx = hibernate.beginTx()) {
+            User user = hibernate.getTx(tx, User.class, name);
 
             if (user == null || !user.getPwd().equals(pwd)) {
                 return Result.error(ErrorCode.FORBIDDEN);
             }
-            hibernate.delete(user);
-            return Result.ok(user);
 
+            hibernate.deleteTx(tx, user);
+            tx.commit();
+            return Result.ok(user);
         } catch (Exception e) {
+            Log.severe("Erro catastrófico no deleteUser: " + e.getMessage());
             return Result.error(ErrorCode.INTERNAL_ERROR);
         }
     }
@@ -105,21 +138,28 @@ public class JavaUsers implements Users {
         if (name == null || pwd == null || query == null){
             return Result.error(ErrorCode.BAD_REQUEST);
         }
-        try {
-            User user = hibernate.get(User.class, name);
+
+        try (TxContext tx = hibernate.beginTx()) {
+            User user = hibernate.getTx(tx, User.class, name);
             if (user == null || !user.getPwd().equals(pwd)) {
                 return Result.error(ErrorCode.FORBIDDEN);
             }
             String jpql = "SELECT u FROM User u WHERE " +
                     "lower(u.name) LIKE lower(:query) OR " +
                     "lower(u.displayName) LIKE lower(:query)";
-            List<User> users = hibernate.jpql(jpql.replace(":query", "'%" + query + "%'"), User.class);
 
-           for (User u : users) {
-                u.setPwd("");
+            List<User> rawUsers = hibernate.jpqlTx(tx, jpql.replace(":query", "'%" + query + "%'"), User.class);
+
+            List<User> safeUsers = new java.util.ArrayList<>();
+            for (User u : rawUsers) {
+                safeUsers.add(new User(u.getName(), "", u.getDisplayName(), u.getDomain()));
             }
-           return Result.ok(users);
+
+            tx.commit();
+            return Result.ok(safeUsers);
+
         } catch (Exception e) {
+            Log.severe("Erro catastrófico no searchUsers User: " + e.getMessage());
             return Result.error(ErrorCode.INTERNAL_ERROR);
         }
     }

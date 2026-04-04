@@ -1,4 +1,4 @@
-package sd2526.trab.api.grpc;
+package sd2526.trab.server.grpc.generated_java;
 
 import static io.grpc.MethodDescriptor.generateFullMethodName;
 

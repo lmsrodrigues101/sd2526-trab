@@ -25,7 +25,6 @@ public interface RestMessages {
 	final String MBOX = "/mbox";
 
 	@POST
-	@Path("/")
 	@Consumes(MediaType.APPLICATION_JSON)
 	@Produces(MediaType.APPLICATION_JSON)
 	String postMessage(@QueryParam(PWD) String pwd, Message msg);

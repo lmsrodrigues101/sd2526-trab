@@ -1,5 +1,6 @@
 package sd2526.trab.clients.grpc;
 
+import java.net.URI;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
 import io.grpc.ManagedChannel;
@@ -16,12 +17,15 @@ public class GrpcClient {
     protected final ManagedChannel channel;
     protected final Logger Log;
 
-    public GrpcClient(String serverURI, Logger logger) {
+    public GrpcClient(URI serverURI, Logger logger) {
         this.Log = logger;
-        // Assume que o URI vem no formato "grpc://host:port"
-        String[] parts = serverURI.replace("grpc://", "").split(":");
-        String host = parts[0];
-        int port = Integer.parseInt(parts[1]);
+        String host = serverURI.getHost();
+        int port = serverURI.getPort();
+
+        // Se o getPort() devolver -1 (não especificado), podes definir um default
+        if (port == -1) {
+            port = 9090;
+        }
 
         this.channel = ManagedChannelBuilder.forAddress(host, port)
                 .usePlaintext() // Para desenvolvimento local sem SSL
@@ -44,18 +48,7 @@ public class GrpcClient {
         return Result.error(ErrorCode.TIMEOUT);
     }
 
-    public static ErrorCode getErrorCodeFrom(int status) {
-        return switch (status) {
-            case 200, 204 -> ErrorCode.OK;
-            case 409 -> ErrorCode.CONFLICT;
-            case 403 -> ErrorCode.FORBIDDEN;
-            case 404 -> ErrorCode.NOT_FOUND;
-            case 400 -> ErrorCode.BAD_REQUEST;
-            case 500 -> ErrorCode.INTERNAL_ERROR;
-            case 501 -> ErrorCode.NOT_IMPLEMENTED;
-            default -> ErrorCode.INTERNAL_ERROR;
-        };
-    }
-
-
 }
+
+
+

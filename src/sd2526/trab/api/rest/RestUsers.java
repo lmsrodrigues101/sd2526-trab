@@ -23,7 +23,6 @@ public interface RestUsers {
 	final String PWD = "pwd";
 	
 	@POST
-	@Path("/")
 	@Consumes(MediaType.APPLICATION_JSON)
 	@Produces(MediaType.APPLICATION_JSON)
 	String postUser(User user);
@@ -45,7 +44,6 @@ public interface RestUsers {
 	User deleteUser(@PathParam(NAME) String name, @QueryParam(PWD) String pwd);
 	
 	@GET
-	@Path("/")
 	@Produces(MediaType.APPLICATION_JSON)
 	List<User> searchUsers(@QueryParam(NAME) String name, @QueryParam(PWD) String pwd, @QueryParam(QUERY) String pattern);	
 }
