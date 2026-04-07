@@ -18,5 +18,3 @@ bin/
 .DS_Store
 *~
 target/
-
-dependency-reduced-pom.xml
