@@ -21,6 +21,7 @@ import sd2526.trab.api.java.Result.ErrorCode;
 
 public class RestMessagesClient extends MessagesClient {
 
+    private static final java.util.concurrent.ConcurrentHashMap<String, Client> clients = new java.util.concurrent.ConcurrentHashMap<>();
 
     final URI serverURI;
     final Client client;
@@ -34,7 +35,7 @@ public class RestMessagesClient extends MessagesClient {
         config.property(ClientProperties.READ_TIMEOUT, READ_TIMEOUT);
         config.property(ClientProperties.CONNECT_TIMEOUT, CONNECT_TIMEOUT);
 
-        this.client = ClientBuilder.newClient(config);
+        this.client = clients.computeIfAbsent(serverURI.toString(), k -> ClientBuilder.newClient(config));
         this.target = client.target(serverURI).path(RestMessages.PATH);
     }
 

@@ -20,6 +20,8 @@ import sd2526.trab.api.java.Result.ErrorCode;
 
 public class RestUsersClient extends UsersClient {
 
+    private static final java.util.concurrent.ConcurrentHashMap<String, Client> clients = new java.util.concurrent.ConcurrentHashMap<>();
+
     final URI serverURI;
     final Client client;
     final ClientConfig config;
@@ -35,7 +37,7 @@ public class RestUsersClient extends UsersClient {
         config.property(ClientProperties.READ_TIMEOUT, READ_TIMEOUT);
         config.property(ClientProperties.CONNECT_TIMEOUT, CONNECT_TIMEOUT);
 
-        this.client = ClientBuilder.newClient(config);
+        this.client = clients.computeIfAbsent(serverURI.toString(), k -> ClientBuilder.newClient(config));
 
         target = client.target(serverURI).path(RestUsers.PATH);
     }

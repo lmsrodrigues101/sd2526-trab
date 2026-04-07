@@ -30,89 +30,80 @@ public class GrpcUsersClient extends UsersClient {
         LoadBalancerRegistry.getDefaultRegistry().register(new PickFirstLoadBalancerProvider());
     }
 
+    private static final java.util.concurrent.ConcurrentHashMap<String, ManagedChannel> channels = new java.util.concurrent.ConcurrentHashMap<>();
     private static Logger Log = Logger.getLogger(UsersRestServer.class.getName());
     private final ManagedChannel channel;
     private final GrpcUsersGrpc.GrpcUsersBlockingStub stub;
 
     public GrpcUsersClient(URI serverURI) {
-        this.channel = ManagedChannelBuilder.forAddress(serverURI.getHost(), serverURI.getPort())
+        String target = serverURI.getHost() + "" + serverURI.getPort();
+        this.channel = channels.computeIfAbsent(target, k -> ManagedChannelBuilder.forAddress(serverURI.getHost(), serverURI.getPort())
                 .usePlaintext()
-                .build();
+                .build());
         this.stub = GrpcUsersGrpc.newBlockingStub(channel);
     }
 
     @Override
     public Result<String> postUser(User user) {
-        try {
-            PostUserResult res = stub.postUser(DataModelAdaptorUser.User_to_GrpcUser(user));
-
-            return Result.ok(res.getUserAddress());
-        } catch (StatusRuntimeException sre) {
-            return Result.error( statusToErrorCode(sre.getStatus()));
-        }
+        return grpcRetry(() ->
+                stub.postUser(DataModelAdaptorUser.User_to_GrpcUser(user)).getUserAddress()
+        );
     }
 
     @Override
     public Result<User> getUser(String name, String pwd) {
-        try {
-            Users.GetUserResult res = stub.getUser(GetUserArgs.newBuilder()
-                    .setName(name)
-                    .setPwd(pwd)
-                    .build());
-
-            return Result.ok(DataModelAdaptorUser.GrpcUser_to_User(res.getUser()));
-        } catch (StatusRuntimeException sre) {
-            return Result.error( statusToErrorCode(sre.getStatus()));
-        }
+        return grpcRetry(() -> DataModelAdaptorUser.GrpcUser_to_User(
+                stub.getUser(GetUserArgs.newBuilder().setName(name).setPwd(pwd).build()).getUser()
+        ));
     }
 
     @Override
     public Result<User> updateUser(String name, String pwd, User info) {
-        try {
-            Users.UpdateUserResult res = stub.updateUser(UpdateUserArgs.newBuilder()
-                    .setName(name)
-                    .setPwd(pwd)
-                    .setInfo(DataModelAdaptorUser.User_to_GrpcUser(info))
-                    .build());
-
-            return Result.ok(DataModelAdaptorUser.GrpcUser_to_User(res.getUser()));
-        } catch (StatusRuntimeException sre) {
-            return Result.error( statusToErrorCode(sre.getStatus()));
-        }
+        return grpcRetry(() -> DataModelAdaptorUser.GrpcUser_to_User(
+                stub.updateUser(UpdateUserArgs.newBuilder()
+                        .setName(name).setPwd(pwd)
+                        .setInfo(DataModelAdaptorUser.User_to_GrpcUser(info))
+                        .build()).getUser()
+        ));
     }
 
     @Override
     public Result<User> deleteUser(String name, String pwd) {
-        try {
-            Users.DeleteUserResult res = stub.deleteUser(DeleteUserArgs.newBuilder()
-                    .setName(name)
-                    .setPwd(pwd)
-                    .build());
-
-            return Result.ok(DataModelAdaptorUser.GrpcUser_to_User(res.getUser()));
-        } catch (StatusRuntimeException sre) {
-            return Result.error( statusToErrorCode(sre.getStatus()));
-        }
+        return grpcRetry(() -> DataModelAdaptorUser.GrpcUser_to_User(
+                stub.deleteUser(DeleteUserArgs.newBuilder().setName(name).setPwd(pwd).build()).getUser()
+        ));
     }
 
     @Override
     public Result<List<User>> searchUsers(String name, String pwd, String query) {
-        try {
+        return grpcRetry(() -> {
             Iterator<GrpcUser> res = stub.searchUsers(SearchUsersArgs.newBuilder()
-                    .setName(name)
-                    .setPwd(pwd)
-                    .setQuery(query)
-                    .build());
-
-            List<User> ret = new ArrayList<User>();
-            while(res.hasNext()) {
+                    .setName(name).setPwd(pwd).setQuery(query).build());
+            List<User> ret = new ArrayList<>();
+            while (res.hasNext()) {
                 ret.add(DataModelAdaptorUser.GrpcUser_to_User(res.next()));
             }
-            return Result.ok(ret);
-        } catch (StatusRuntimeException sre) {
-            return Result.error( statusToErrorCode(sre.getStatus()));
-        }
+            return ret;
+        });
     }
 
-
+    private <T> Result<T> grpcRetry(java.util.function.Supplier<T> call) {
+        for (int i = 0; i < MAX_RETRIES; i++) {
+            try {
+                return Result.ok(call.get());
+            } catch (StatusRuntimeException e) {
+                // Se o servidor estiver em baixo (a iniciar ou com rede cortada), espera e tenta de novo
+                if (e.getStatus().getCode() == io.grpc.Status.Code.UNAVAILABLE ||
+                        e.getStatus().getCode() == io.grpc.Status.Code.DEADLINE_EXCEEDED) {
+                    try { Thread.sleep(RETRY_SLEEP); } catch (InterruptedException ignored) {}
+                    continue;
+                }
+                // Se for um erro real de negócio (ex: password errada), devolve logo
+                return Result.error(statusToErrorCode(e.getStatus()));
+            } catch (Exception e) {
+                return Result.error(Result.ErrorCode.INTERNAL_ERROR);
+            }
+        }
+        return Result.error(Result.ErrorCode.TIMEOUT);
+    }
 }
