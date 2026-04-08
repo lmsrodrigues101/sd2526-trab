@@ -1,4 +1,4 @@
-package sd2526.trab;
+package sd2526.trab.server;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
@@ -28,7 +28,6 @@ public class Discovery {
 
     static final public InetSocketAddress DISCOVERY_ADDR = new InetSocketAddress("226.226.226.226", 2266);
     static final int DISCOVERY_ANNOUNCE_PERIOD = 1000;
-    static final int DISCOVERY_RETRY_TIMEOUT = 5000;
     static final int MAX_DATAGRAM_SIZE = 65536;
 
     private static final String DELIMITER = "\t";
@@ -38,7 +37,6 @@ public class Discovery {
     private final String serviceURI;
     private final MulticastSocket ms;
 
-    // 1. Armazenamento para os URIs descobertos (Thread-Safe)
     private final Map<String, List<URI>> discoveredUris = new ConcurrentHashMap<>();
 
     public Discovery(InetSocketAddress addr, String serviceName, String serviceURI) throws SocketException, UnknownHostException, IOException {
@@ -74,7 +72,6 @@ public class Discovery {
                             ms.send(announcePkt);
                             Thread.sleep(DISCOVERY_ANNOUNCE_PERIOD);
                         } catch (Exception e) {
-                            // e.printStackTrace();
                         }
                     }
                 }).start();
@@ -83,7 +80,6 @@ public class Discovery {
             }
         }
 
-        // Thread para recolher anúncios (Receiver)
         new Thread(() -> {
             DatagramPacket pkt = new DatagramPacket(new byte[MAX_DATAGRAM_SIZE], MAX_DATAGRAM_SIZE);
             for (;;) {
@@ -97,35 +93,31 @@ public class Discovery {
                         String sName = msgElems[0];
                         URI uri = URI.create(msgElems[1]);
 
-                        // 2. COMPLETADO: Gravar a informação recebida
                         var uris = discoveredUris.computeIfAbsent(sName, k -> Collections.synchronizedList(new ArrayList<>()));
                         if (!uris.contains(uri)) {
                             uris.add(uri);
-                            // 3. Notificar a ServiceFactory para que os clientes funcionem
                             ServiceFactory.getInstance().addService(sName, uri);
                         }
                     }
                 } catch (IOException e) {
-                    // do nothing
                 }
             }
         }).start();
     }
 
-    /**
-     * 4. IMPLEMENTADO: Retorna os serviços conhecidos, bloqueando se necessário.
-     */
     public URI[] knownUrisOf(String serviceName, int minReplies) {
         for (;;) {
-            List<URI> res = discoveredUris.getOrDefault(serviceName, List.of());
-            if (res.size() >= minReplies) {
-                return res.toArray(new URI[0]);
+            List<URI> res = discoveredUris.get(serviceName);
+            if (res != null && res.size() >= minReplies) {
+                // FIX: O .toArray() sobre Listas Sincronizadas obriga a este bloco lock!
+                synchronized (res) {
+                    return res.toArray(new URI[0]);
+                }
             }
 
             try {
                 Thread.sleep(DISCOVERY_ANNOUNCE_PERIOD);
             } catch (InterruptedException e) {
-                // ignore
             }
         }
     }

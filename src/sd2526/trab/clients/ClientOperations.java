@@ -10,10 +10,12 @@ import io.grpc.Status;
 
 public class ClientOperations {
     private static Logger Log = Logger.getLogger(ClientOperations.class.getName());
-    protected static final int MAX_RETRIES = 10;
-    protected static final int READ_TIMEOUT = 5000;
-    protected static final int RETRY_SLEEP = 5000;
-    protected static final int CONNECT_TIMEOUT = 5000;
+
+    // FIX: Baixados os limites. 10 retries a 5s davam 50s.
+    protected static final int MAX_RETRIES = 3;
+    protected static final int READ_TIMEOUT = 10000;
+    protected static final int RETRY_SLEEP = 1000;
+    protected static final int CONNECT_TIMEOUT = 10000;
 
     public ClientOperations() {
     }
@@ -27,7 +29,6 @@ public class ClientOperations {
                 try {
                     Thread.sleep(RETRY_SLEEP);
                 } catch (InterruptedException ie) {
-                    // Nothing to be done here.
                 }
             } catch (Exception x) {
                 x.printStackTrace();
@@ -45,7 +46,6 @@ public class ClientOperations {
                 try {
                     Thread.sleep(RETRY_SLEEP);
                 } catch (InterruptedException e) {
-                    // Nothing to be done here.
                 }
             } catch (Exception x) {
                 x.printStackTrace();
@@ -63,7 +63,6 @@ public class ClientOperations {
                 try {
                     Thread.sleep(RETRY_SLEEP);
                 } catch (InterruptedException ie) {
-                    // Nothing to be done here.
                 }
             } catch (Exception x) {
                 x.printStackTrace();
@@ -81,7 +80,6 @@ public class ClientOperations {
                 try {
                     Thread.sleep(RETRY_SLEEP);
                 } catch (InterruptedException ie) {
-                    // Nothing to be done here.
                 }
             } catch (Exception x) {
                 x.printStackTrace();
@@ -92,7 +90,7 @@ public class ClientOperations {
 
     public static ErrorCode getErrorCodeFrom(int status) {
         return switch (status) {
-            case 200, 209 -> ErrorCode.OK;
+            case 200, 204, 209 -> ErrorCode.OK; // FIX: Adicionado 204 (NO_CONTENT) que é vital para Deletes REST
             case 409 -> ErrorCode.CONFLICT;
             case 403 -> ErrorCode.FORBIDDEN;
             case 404 -> ErrorCode.NOT_FOUND;

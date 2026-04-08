@@ -6,7 +6,7 @@ import java.util.logging.Logger;
 import org.glassfish.jersey.jdkhttp.JdkHttpServerFactory;
 import org.glassfish.jersey.server.ResourceConfig;
 
-import sd2526.trab.Discovery; // Importa a classe Discovery que acabámos de consertar
+import sd2526.trab.server.Discovery; // Importa a classe Discovery que acabámos de consertar
 import sd2526.trab.server.rest.RestUsersResource;
 
 public class UsersRestServer {

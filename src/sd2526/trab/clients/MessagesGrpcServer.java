@@ -4,7 +4,7 @@ import java.net.InetAddress;
 import java.util.logging.Logger;
 
 import io.grpc.*;
-import sd2526.trab.Discovery;
+import sd2526.trab.server.Discovery;
 import sd2526.trab.server.grpc.GrpcMessagesController;
 import sd2526.trab.server.java.JavaMessages;
 
