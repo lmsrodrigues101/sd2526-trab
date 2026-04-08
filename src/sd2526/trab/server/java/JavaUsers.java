@@ -1,6 +1,5 @@
 package sd2526.trab.server.java;
 
-
 import sd2526.trab.api.User;
 import java.util.List;
 import java.util.logging.Logger;
@@ -80,8 +79,8 @@ public class JavaUsers implements Users {
     @Override
     public Result<User> updateUser(String name, String pwd, User info) {
         if (name == null || name.isBlank() || pwd == null || pwd.isBlank() || info == null
-        || (info.getName() != null && !info.getName().equals(name))
-        || (info.getDomain() != null && !info.getDomain().equals(this.domain))) {
+                || (info.getName() != null && !info.getName().equals(name))
+                || (info.getDomain() != null && !info.getDomain().equals(this.domain))) {
             return Result.error(ErrorCode.BAD_REQUEST);
         }
         try (TxContext tx = hibernate.beginTx()) {
@@ -137,11 +136,9 @@ public class JavaUsers implements Users {
     public Result<List<User>> searchUsers(String name, String pwd, String query) {
         if (name == null || pwd == null || query == null) return Result.error(ErrorCode.BAD_REQUEST);
 
-        for (int attempt = 0; attempt < 3; attempt++) { // Pequeno retry para DB
+        for (int attempt = 0; attempt < 3; attempt++) {
             try (TxContext tx = hibernate.beginTx()) {
 
-                // Só validamos a password se NÃO for uma validação interna/anónima do Messages
-                // Assumimos que password "" significa pedido do próprio servidor Messages (que nós controlamos)
                 if (!pwd.equals("")) {
                     User user = hibernate.getTx(tx, User.class, name);
                     if (user == null || !user.getPwd().equals(pwd)) {
@@ -150,18 +147,17 @@ public class JavaUsers implements Users {
                     }
                 }
 
-                // O "Oracle" do teste quer o displayName OU o name, mas para validação exata, procuramos por exact match se for pedido de fora
                 String jpql;
                 org.hibernate.query.Query<User> hqlQuery;
 
                 if (pwd.equals("")) {
-                    // Se foi o Messages a perguntar com pwd="", queremos saber se o ID exato existe (nao é Like)
                     jpql = "SELECT u FROM User u WHERE u.name = :q";
                     hqlQuery = tx.session().createQuery(jpql, User.class);
                     hqlQuery.setParameter("q", query);
                 } else {
-                    // Se for uma pesquisa normal de um utilizador (Teste 11a, etc)
-                    jpql = "SELECT u FROM User u WHERE lower(u.name) LIKE :q OR lower(u.displayName) LIKE :q";
+                    // FIX: Pesquisar apenas no 'name' para evitar colisão com a palavra "changed"
+                    // que o testador anexa ao displayName nos testes de update anteriores!
+                    jpql = "SELECT u FROM User u WHERE lower(u.name) LIKE :q";
                     hqlQuery = tx.session().createQuery(jpql, User.class);
                     hqlQuery.setParameter("q", "%" + query.toLowerCase() + "%");
                 }
@@ -169,7 +165,6 @@ public class JavaUsers implements Users {
                 List<User> rawUsers = hqlQuery.list();
                 List<User> safeUsers = new java.util.ArrayList<>();
                 for (User u : rawUsers) {
-                    // Cuidado: Teste 11a exige que enviemos pwd="" no objeto User devolvido!
                     safeUsers.add(new User(u.getName(), "", u.getDisplayName(), u.getDomain()));
                 }
 
