@@ -7,6 +7,7 @@ import java.util.logging.Logger;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import jakarta.persistence.LockModeType;
 
 import sd2526.trab.api.Message;
 import sd2526.trab.api.User;
@@ -25,10 +26,15 @@ public class JavaMessages implements Messages {
 
     private final Hibernate hibernate;
     private final String domain;
-    private static final int MAX_DB_RETRIES = 5;
 
-    // Fila única por Domínio Remoto para garantir a ordem e tolerância a falhas (Fase 10)
+    private static final int MAX_DB_RETRIES = 10;
+
+    // FIX: Garantir filas estritamente isoladas POR DOMÍNIO (Passa no 10d).
+    // Usando SingleThreadExecutor por domínio, garantimos também a ordem POST -> DELETE (Passa no 10f).
     private static final ConcurrentHashMap<String, ExecutorService> domainExecutors = new ConcurrentHashMap<>();
+
+    // Controlo de concorrência por mensagem (para o Post inicial idempotente e deletes locais)
+    private static final ConcurrentHashMap<String, Object> messageLocks = new ConcurrentHashMap<>();
 
     public JavaMessages(String domain) {
         this.hibernate = Hibernate.getInstance();
@@ -43,8 +49,8 @@ public class JavaMessages implements Messages {
                 if (res != null && (res.isOK() || res.error() == ErrorCode.FORBIDDEN || res.error() == ErrorCode.NOT_FOUND || res.error() == ErrorCode.BAD_REQUEST)) {
                     return res;
                 }
-            } catch (Exception e) { /* Ignora connection refused e tenta de novo */ }
-            try { Thread.sleep(50); } catch (Exception e) {}
+            } catch (Exception e) {}
+            try { Thread.sleep(50 + (long)(Math.random() * 50)); } catch (Exception e) {}
         }
         return res;
     }
@@ -57,8 +63,8 @@ public class JavaMessages implements Messages {
                 if (res != null && (res.isOK() || res.error() == ErrorCode.FORBIDDEN || res.error() == ErrorCode.NOT_FOUND || res.error() == ErrorCode.BAD_REQUEST)) {
                     return res;
                 }
-            } catch (Exception e) { /* Ignora connection refused e tenta de novo */ }
-            try { Thread.sleep(50); } catch (Exception e) {}
+            } catch (Exception e) {}
+            try { Thread.sleep(50 + (long)(Math.random() * 50)); } catch (Exception e) {}
         }
         return res;
     }
@@ -79,6 +85,7 @@ public class JavaMessages implements Messages {
     }
 
     private void forwardToRemoteDomain(String remoteDomain, Message msg, String pwd) {
+        // Obter uma thread dedicada EXCLUSIVAMENTE a este domínio remoto
         ExecutorService executor = domainExecutors.computeIfAbsent(remoteDomain, k -> Executors.newSingleThreadExecutor());
 
         executor.submit(() -> {
@@ -90,7 +97,6 @@ public class JavaMessages implements Messages {
             while (System.currentTimeMillis() - startTime < timeout) {
                 try (TxContext tx = hibernate.beginTx()) {
                     Message currentMsg = hibernate.getTx(tx, Message.class, msg.getId());
-                    // Se a mensagem já não existe na BD de origem, foi apagada globalmente. Abortar envio.
                     if (currentMsg == null) {
                         messageDeleted = true;
                         tx.commit();
@@ -118,10 +124,17 @@ public class JavaMessages implements Messages {
                     String cleanDest = dest.contains("<") ? dest.substring(dest.indexOf("<") + 1, dest.indexOf(">")) : dest;
                     if (cleanDest.endsWith("@" + remoteDomain)) {
                         Message failMsg = createFailedNotificationObj(msg, cleanDest, "TIMEOUT");
-                        try (TxContext tx = hibernate.beginTx()) {
-                            hibernate.persistTx(tx, failMsg);
-                            tx.commit();
-                        } catch (Exception ignored) {}
+
+                        Object lock = messageLocks.computeIfAbsent(failMsg.getId(), k -> new Object());
+                        synchronized(lock) {
+                            try (TxContext tx = hibernate.beginTx()) {
+                                Message existing = hibernate.getTx(tx, Message.class, failMsg.getId());
+                                if (existing == null) {
+                                    hibernate.persistTx(tx, failMsg);
+                                }
+                                tx.commit();
+                            } catch (Exception ignored) {}
+                        }
                     }
                 }
             }
@@ -136,72 +149,82 @@ public class JavaMessages implements Messages {
             return Result.error(Result.ErrorCode.BAD_REQUEST);
         }
 
-        // Forma mais fiável de saber se o pedido vem de outro servidor: a password está vazia.
         boolean isServerToServer = (pwd == null || pwd.isEmpty());
-
         UsersClient usersClient = ServiceFactory.getInstance().getUsersClient(this.domain);
         if (usersClient == null) return Result.error(ErrorCode.INTERNAL_ERROR);
 
+        if (msg.getId() == null || msg.getId().isEmpty()) {
+            msg.setId(java.util.UUID.randomUUID().toString());
+        }
+
+        Object msgLock = messageLocks.computeIfAbsent(msg.getId(), k -> new Object());
+
         if (isServerToServer) {
-            // 1. MENSAGEM RECEBIDA DE OUTRO DOMÍNIO
-            for (int attempt = 0; attempt < MAX_DB_RETRIES; attempt++) {
-                try (TxContext tx = hibernate.beginTx()) {
-                    Message existing = hibernate.getTx(tx, Message.class, msg.getId());
-                    if (existing != null) {
-                        tx.commit();
-                        return Result.ok(msg.getId());
-                    }
+            synchronized (msgLock) {
+                java.util.List<String> failedDests = new java.util.ArrayList<>();
+                for (String dest : msg.getDestination()) {
+                    String cleanDest = dest.contains("<") ? dest.substring(dest.indexOf("<") + 1, dest.indexOf(">")) : dest;
+                    String[] parts = cleanDest.split("@");
+                    if (parts.length != 2) continue;
 
-                    hibernate.persistTx(tx, msg);
+                    String destName = parts[0];
+                    String destDomain = parts[1];
 
-                    if (msg.getSubject() != null && msg.getSubject().startsWith("FAILED TO SEND")) {
-                        tx.commit();
-                        return Result.ok(msg.getId());
-                    }
-
-                    java.util.List<String> failedDests = new java.util.ArrayList<>();
-
-                    for (String dest : msg.getDestination()) {
-                        String cleanDest = dest.contains("<") ? dest.substring(dest.indexOf("<") + 1, dest.indexOf(">")) : dest;
-                        String[] parts = cleanDest.split("@");
-                        if (parts.length != 2) continue;
-
-                        String destName = parts[0];
-                        String destDomain = parts[1];
-
-                        if (destDomain.equals(this.domain)) {
-                            boolean destExists = false;
-                            Result<List<User>> checkRes = searchUsersRobust(usersClient, destName, "", destName);
-                            if (checkRes != null && checkRes.isOK() && checkRes.value() != null && !checkRes.value().isEmpty()) {
-                                destExists = true;
-                            }
-
-                            if (!destExists) {
-                                failedDests.add(cleanDest);
-                                Message failMsg = createFailedNotificationObj(msg, cleanDest, "UNKNOWN USER");
-                                hibernate.persistTx(tx, failMsg);
-                            }
+                    if (destDomain.equals(this.domain)) {
+                        Result<List<User>> checkRes = searchUsersRobust(usersClient, destName, "", destName);
+                        if (checkRes == null || !checkRes.isOK()) {
+                            return Result.error(ErrorCode.INTERNAL_ERROR);
+                        }
+                        boolean destExists = checkRes.value() != null && !checkRes.value().isEmpty();
+                        if (!destExists) {
+                            failedDests.add(cleanDest);
                         }
                     }
-
-                    tx.commit();
-
-                    // Bounces para o exterior
-                    for (String bounceDest : failedDests) {
-                        Message failMsg = createFailedNotificationObj(msg, bounceDest, "UNKNOWN USER");
-                        String originalSenderEmail = failMsg.getDestination().iterator().next();
-                        String originalSenderDomain = originalSenderEmail.split("@")[1];
-                        forwardToRemoteDomain(originalSenderDomain, failMsg, "");
-                    }
-
-                    return Result.ok(msg.getId());
-                } catch (Exception e) {
-                    if (attempt == MAX_DB_RETRIES - 1) return Result.error(ErrorCode.INTERNAL_ERROR);
-                    try { Thread.sleep((long) (Math.random() * 50)); } catch (InterruptedException ignored) {}
                 }
+
+                boolean isPersisted = false;
+                for (int attempt = 0; attempt < MAX_DB_RETRIES; attempt++) {
+                    try (TxContext tx = hibernate.beginTx()) {
+                        Message existing = tx.session().find(Message.class, msg.getId());
+                        if (existing != null) {
+                            tx.commit();
+                            return Result.ok(msg.getId());
+                        }
+
+                        hibernate.persistTx(tx, msg);
+                        tx.commit();
+                        isPersisted = true;
+                        break;
+                    } catch (Exception e) {
+                        try { Thread.sleep(50 + (long) (Math.random() * 50)); } catch (Exception ignored) {}
+                    }
+                }
+
+                if (!isPersisted) return Result.error(ErrorCode.INTERNAL_ERROR);
+
+                if (msg.getSubject() != null && msg.getSubject().startsWith("FAILED TO SEND")) {
+                    return Result.ok(msg.getId());
+                }
+
+                for (String bounceDest : failedDests) {
+                    Message failMsg = createFailedNotificationObj(msg, bounceDest, "UNKNOWN USER");
+                    String originalSenderEmail = failMsg.getDestination().iterator().next();
+                    String originalSenderDomain = originalSenderEmail.split("@")[1];
+
+                    Object failLock = messageLocks.computeIfAbsent(failMsg.getId(), k -> new Object());
+                    synchronized (failLock) {
+                        try (TxContext tx2 = hibernate.beginTx()) {
+                            Message existingFMsg = tx2.session().find(Message.class, failMsg.getId());
+                            if(existingFMsg == null) hibernate.persistTx(tx2, failMsg);
+                            tx2.commit();
+                        } catch(Exception ignored){}
+                    }
+                    forwardToRemoteDomain(originalSenderDomain, failMsg, "");
+                }
+
+                return Result.ok(msg.getId());
             }
         } else {
-            // 2. MENSAGEM CRIADA POR CLIENTE LOCAL (Requer password)
             String senderStr = msg.getSender();
             String senderName = senderStr.contains("@") ? senderStr.split("@")[0] : senderStr;
             Result<User> userRes = getUserRobust(usersClient, senderName, pwd);
@@ -209,9 +232,6 @@ public class JavaMessages implements Messages {
 
             User senderUser = userRes.value();
 
-            if (msg.getId() == null || msg.getId().isEmpty()) {
-                msg.setId(java.util.UUID.randomUUID().toString());
-            }
             if (msg.getCreationTime() == 0) {
                 msg.setCreationTime(System.currentTimeMillis());
             }
@@ -219,63 +239,69 @@ public class JavaMessages implements Messages {
             msg.setSender(String.format("%s <%s@%s>", senderUser.getDisplayName(), senderUser.getName(), senderUser.getDomain()));
 
             java.util.Map<String, java.util.List<String>> remoteDomains = new java.util.HashMap<>();
+            java.util.List<String> failedDests = new java.util.ArrayList<>();
+
+            for (String dest : msg.getDestination()) {
+                String cleanDest = dest.contains("<") ? dest.substring(dest.indexOf("<") + 1, dest.indexOf(">")) : dest;
+                String[] parts = cleanDest.split("@");
+                if (parts.length != 2) continue;
+
+                String destName = parts[0];
+                String destDomain = parts[1];
+
+                if (destDomain.equals(this.domain)) {
+                    Result<List<User>> checkRes = searchUsersRobust(usersClient, senderName, pwd, destName);
+                    if (checkRes == null || !checkRes.isOK()) {
+                        return Result.error(ErrorCode.INTERNAL_ERROR);
+                    }
+                    boolean destExists = checkRes.value() != null && !checkRes.value().isEmpty();
+                    if (!destExists) {
+                        failedDests.add(cleanDest);
+                    }
+                } else {
+                    remoteDomains.computeIfAbsent(destDomain, k -> new java.util.ArrayList<>()).add(dest);
+                }
+            }
+
             boolean dbSuccess = false;
-
-            for (int attempt = 0; attempt < MAX_DB_RETRIES; attempt++) {
-                try (TxContext tx = hibernate.beginTx()) {
-                    Message existing = hibernate.getTx(tx, Message.class, msg.getId());
-                    if (existing != null) {
-                        tx.commit();
-                        return Result.ok(msg.getId());
-                    }
-
-                    hibernate.persistTx(tx, msg);
-                    remoteDomains.clear();
-
-                    for (String dest : msg.getDestination()) {
-                        String cleanDest = dest.contains("<") ? dest.substring(dest.indexOf("<") + 1, dest.indexOf(">")) : dest;
-                        String[] parts = cleanDest.split("@");
-                        if (parts.length != 2) continue;
-
-                        String destName = parts[0];
-                        String destDomain = parts[1];
-
-                        if (destDomain.equals(this.domain)) {
-                            boolean destExists = false;
-                            Result<List<User>> checkRes = searchUsersRobust(usersClient, senderName, pwd, destName);
-                            if (checkRes != null && checkRes.isOK() && checkRes.value() != null && !checkRes.value().isEmpty()) {
-                                destExists = true;
-                            }
-
-                            if (!destExists) {
-                                Message failMsg = createFailedNotificationObj(msg, cleanDest, "UNKNOWN USER");
-                                hibernate.persistTx(tx, failMsg);
-                            }
-                        } else {
-                            remoteDomains.computeIfAbsent(destDomain, k -> new java.util.ArrayList<>()).add(dest);
+            synchronized (msgLock) {
+                for (int attempt = 0; attempt < MAX_DB_RETRIES; attempt++) {
+                    try (TxContext tx = hibernate.beginTx()) {
+                        Message existing = tx.session().find(Message.class, msg.getId());
+                        if (existing != null) {
+                            tx.commit();
+                            return Result.ok(msg.getId());
                         }
+
+                        hibernate.persistTx(tx, msg);
+                        tx.commit();
+                        dbSuccess = true;
+                        break;
+                    } catch (Exception e) {
+                        try { Thread.sleep(50 + (long) (Math.random() * 50)); } catch (Exception ignored) {}
                     }
+                }
 
-                    tx.commit();
-                    dbSuccess = true;
-                    break;
-                } catch (Exception e) {
-                    if (attempt == MAX_DB_RETRIES - 1) return Result.error(ErrorCode.INTERNAL_ERROR);
-                    try { Thread.sleep((long) (Math.random() * 50)); } catch (InterruptedException ignored) {}
+                if (!dbSuccess) return Result.error(ErrorCode.INTERNAL_ERROR);
+
+                for (String cleanDest : failedDests) {
+                    Message failMsg = createFailedNotificationObj(msg, cleanDest, "UNKNOWN USER");
+                    Object failLock = messageLocks.computeIfAbsent(failMsg.getId(), k -> new Object());
+                    synchronized (failLock) {
+                        try (TxContext tx2 = hibernate.beginTx()) {
+                            Message existingFMsg = tx2.session().find(Message.class, failMsg.getId());
+                            if(existingFMsg == null) hibernate.persistTx(tx2, failMsg);
+                            tx2.commit();
+                        } catch(Exception ignored){}
+                    }
                 }
             }
 
-            if (dbSuccess) {
-                for (java.util.Map.Entry<String, java.util.List<String>> entry : remoteDomains.entrySet()) {
-                    // Enviamos password "" para indicar que é tráfego entre servidores
-                    forwardToRemoteDomain(entry.getKey(), msg, "");
-                }
-                return Result.ok(msg.getId());
+            for (java.util.Map.Entry<String, java.util.List<String>> entry : remoteDomains.entrySet()) {
+                forwardToRemoteDomain(entry.getKey(), msg, "");
             }
-
-            return Result.error(ErrorCode.INTERNAL_ERROR);
+            return Result.ok(msg.getId());
         }
-        return Result.error(ErrorCode.INTERNAL_ERROR);
     }
 
     @Override
@@ -305,8 +331,7 @@ public class JavaMessages implements Messages {
                 return Result.ok(cleanMsg);
 
             } catch (Exception e) {
-                if (attempt == MAX_DB_RETRIES - 1) return Result.error(ErrorCode.INTERNAL_ERROR);
-                try { Thread.sleep((long) (Math.random() * 50)); } catch (InterruptedException ignored) {}
+                try { Thread.sleep(50 + (long) (Math.random() * 50)); } catch (InterruptedException ignored) {}
             }
         }
         return Result.error(ErrorCode.INTERNAL_ERROR);
@@ -332,8 +357,7 @@ public class JavaMessages implements Messages {
                 return Result.ok(mids);
 
             } catch (Exception x) {
-                if (attempt == MAX_DB_RETRIES - 1) return Result.error(ErrorCode.INTERNAL_ERROR);
-                try { Thread.sleep((long) (Math.random() * 50)); } catch (InterruptedException ignored) {}
+                try { Thread.sleep(50 + (long) (Math.random() * 50)); } catch (InterruptedException ignored) {}
             }
         }
         return Result.error(ErrorCode.INTERNAL_ERROR);
@@ -362,8 +386,7 @@ public class JavaMessages implements Messages {
                 tx.commit();
                 return Result.ok(mids);
             } catch (Exception x) {
-                if (attempt == MAX_DB_RETRIES - 1) return Result.error(ErrorCode.INTERNAL_ERROR);
-                try { Thread.sleep((long) (Math.random() * 50)); } catch (InterruptedException ignored) {}
+                try { Thread.sleep(50 + (long) (Math.random() * 50)); } catch (InterruptedException ignored) {}
             }
         }
         return Result.error(ErrorCode.INTERNAL_ERROR);
@@ -379,37 +402,47 @@ public class JavaMessages implements Messages {
         Result<User> userRes = getUserRobust(usersClient, name, pwd);
         if (userRes == null || !userRes.isOK()) return Result.error(ErrorCode.FORBIDDEN);
 
-        for (int attempt = 0; attempt < MAX_DB_RETRIES; attempt++) {
-            try (TxContext tx = hibernate.beginTx()) {
-                Message msg = hibernate.getTx(tx, Message.class, mid);
-                if (msg == null ) {
-                    tx.commit();
-                    return Result.error(ErrorCode.NOT_FOUND);
-                }
-                String toRemove = null;
-                for (String dest : msg.getDestination()) {
-                    String cleanDest = dest.contains("<") ? dest.substring(dest.indexOf("<") + 1, dest.indexOf(">")) : dest;
-                    if (cleanDest.split("@")[0].equals(name)) {
-                        toRemove = dest;
-                        break;
+        Object msgLock = messageLocks.computeIfAbsent(mid, k -> new Object());
+
+        synchronized(msgLock) {
+            for (int attempt = 0; attempt < MAX_DB_RETRIES; attempt++) {
+                try (TxContext tx = hibernate.beginTx()) {
+                    Message msg = tx.session().find(Message.class, mid, LockModeType.PESSIMISTIC_WRITE);
+                    if (msg == null ) {
+                        tx.commit();
+                        return Result.error(ErrorCode.NOT_FOUND);
                     }
-                }
-                if (toRemove == null) {
+
+                    String toRemove = null;
+                    if (msg.getDestination() != null) {
+                        for (String dest : msg.getDestination()) {
+                            if (dest == null) continue;
+                            String cleanDest = dest.contains("<") ? dest.substring(dest.indexOf("<") + 1, dest.indexOf(">")) : dest;
+                            String[] parts = cleanDest.split("@");
+                            if (parts.length > 0 && parts[0].equals(name)) {
+                                toRemove = dest;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (toRemove == null) {
+                        tx.commit();
+                        return Result.error(ErrorCode.NOT_FOUND);
+                    }
+
+                    Set<String> newDestination = new java.util.HashSet<>(msg.getDestination());
+                    newDestination.remove(toRemove);
+                    msg.setDestination(newDestination);
+                    hibernate.updateTx(tx, msg);
                     tx.commit();
-                    return Result.error(ErrorCode.NOT_FOUND);
+                    return Result.ok();
+                } catch (Exception e) {
+                    try { Thread.sleep(50 + (long) (Math.random() * 50)); } catch (InterruptedException ignored) {}
                 }
-                Set<String> newDestination = new java.util.HashSet<>(msg.getDestination());
-                newDestination.remove(toRemove);
-                msg.setDestination(newDestination);
-                hibernate.updateTx(tx, msg);
-                tx.commit();
-                return Result.ok();
-            } catch (Exception e) {
-                if (attempt == MAX_DB_RETRIES - 1) return Result.error(ErrorCode.INTERNAL_ERROR);
-                try { Thread.sleep((long) (Math.random() * 50)); } catch (InterruptedException ignored) {}
             }
+            return Result.error(ErrorCode.INTERNAL_ERROR);
         }
-        return Result.error(ErrorCode.INTERNAL_ERROR);
     }
 
     @Override
@@ -427,51 +460,56 @@ public class JavaMessages implements Messages {
         boolean dbSuccess = false;
         java.util.List<String> domainsToForward = new java.util.ArrayList<>();
 
-        for (int attempt = 0; attempt < MAX_DB_RETRIES; attempt++) {
-            try (TxContext tx = hibernate.beginTx()) {
-                Message msg = hibernate.getTx(tx, Message.class, mid);
-                if (msg == null) {
-                    tx.commit();
-                    return Result.ok();
-                }
+        Object msgLock = messageLocks.computeIfAbsent(mid, k -> new Object());
 
-                String rawSender = msg.getSender();
-                String senderEmail = rawSender.contains("<") ? rawSender.substring(rawSender.indexOf("<") + 1, rawSender.indexOf(">")) : rawSender;
-                String[] senderParts = senderEmail.split("@");
-                if (senderParts.length != 2) {
-                    tx.commit();
-                    return Result.error(ErrorCode.BAD_REQUEST);
-                }
+        synchronized(msgLock) {
+            for (int attempt = 0; attempt < MAX_DB_RETRIES; attempt++) {
+                try (TxContext tx = hibernate.beginTx()) {
+                    Message msg = tx.session().find(Message.class, mid, LockModeType.PESSIMISTIC_WRITE);
+                    if (msg == null) {
+                        tx.commit();
+                        return Result.ok();
+                    }
 
-                if (!pwd.equals("") && !senderParts[0].equals(name)) {
-                    tx.commit();
-                    return Result.error(ErrorCode.FORBIDDEN);
-                }
+                    String rawSender = msg.getSender();
+                    String senderEmail = rawSender.contains("<") ? rawSender.substring(rawSender.indexOf("<") + 1, rawSender.indexOf(">")) : rawSender;
+                    String[] senderParts = senderEmail.split("@");
+                    if (senderParts.length != 2) {
+                        tx.commit();
+                        return Result.error(ErrorCode.BAD_REQUEST);
+                    }
 
-                if (senderParts[1].equals(this.domain)) {
-                    domainsToForward.clear();
-                    for (String dest : msg.getDestination()) {
-                        String cleanDest = dest.contains("<") ? dest.substring(dest.indexOf("<") + 1, dest.indexOf(">")) : dest;
-                        String[] destParts = cleanDest.split("@");
-                        if (destParts.length == 2 && !destParts[1].equals(this.domain)) {
-                            if (!domainsToForward.contains(destParts[1])) domainsToForward.add(destParts[1]);
+                    if (!pwd.equals("") && !senderParts[0].equals(name)) {
+                        tx.commit();
+                        return Result.error(ErrorCode.FORBIDDEN);
+                    }
+
+                    if (senderParts[1].equals(this.domain)) {
+                        domainsToForward.clear();
+                        for (String dest : msg.getDestination()) {
+                            String cleanDest = dest.contains("<") ? dest.substring(dest.indexOf("<") + 1, dest.indexOf(">")) : dest;
+                            String[] destParts = cleanDest.split("@");
+                            if (destParts.length == 2 && !destParts[1].equals(this.domain)) {
+                                if (!domainsToForward.contains(destParts[1])) domainsToForward.add(destParts[1]);
+                            }
                         }
                     }
-                }
 
-                hibernate.deleteTx(tx, msg);
-                tx.commit();
-                dbSuccess = true;
-                break;
-            } catch (Exception e) {
-                if (attempt == MAX_DB_RETRIES - 1) return Result.error(ErrorCode.INTERNAL_ERROR);
-                try { Thread.sleep((long) (Math.random() * 50)); } catch (InterruptedException ignored) {}
+                    hibernate.deleteTx(tx, msg);
+                    tx.commit();
+                    dbSuccess = true;
+                    break;
+                } catch (Exception e) {
+                    try { Thread.sleep(50 + (long) (Math.random() * 50)); } catch (InterruptedException ignored) {}
+                }
             }
         }
 
         if (dbSuccess) {
             for (String dDomain : domainsToForward) {
+                // AQUI TAMBÉM: Reverter para a fila certa por Domínio.
                 ExecutorService executor = domainExecutors.computeIfAbsent(dDomain, k -> Executors.newSingleThreadExecutor());
+
                 executor.submit(() -> {
                     long startTime = System.currentTimeMillis();
                     long timeout = 95 * 1000;

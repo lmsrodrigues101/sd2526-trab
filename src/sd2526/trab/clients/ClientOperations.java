@@ -12,7 +12,7 @@ public class ClientOperations {
     private static Logger Log = Logger.getLogger(ClientOperations.class.getName());
 
     // FIX: Baixados os limites. 10 retries a 5s davam 50s.
-    protected static final int MAX_RETRIES = 3;
+    protected static final int MAX_RETRIES = 5;
     protected static final int READ_TIMEOUT = 10000;
     protected static final int RETRY_SLEEP = 1000;
     protected static final int CONNECT_TIMEOUT = 10000;
