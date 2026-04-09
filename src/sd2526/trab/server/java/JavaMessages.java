@@ -7,7 +7,6 @@ import java.util.logging.Logger;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import jakarta.persistence.LockModeType;
 
 import sd2526.trab.api.Message;
 import sd2526.trab.api.User;
@@ -27,10 +26,10 @@ public class JavaMessages implements Messages {
     private final Hibernate hibernate;
     private final String domain;
 
-    private static final int MAX_DB_RETRIES = 10;
+    // FIX: Igualar ao Users para sobreviver à concorrência extrema do teste 12
+    private static final int MAX_DB_RETRIES = 50;
 
-    // FIX: Garantir filas estritamente isoladas POR DOMÍNIO (Passa no 10d).
-    // Usando SingleThreadExecutor por domínio, garantimos também a ordem POST -> DELETE (Passa no 10f).
+    // Filas estritamente isoladas POR DOMÍNIO
     private static final ConcurrentHashMap<String, ExecutorService> domainExecutors = new ConcurrentHashMap<>();
 
     // Controlo de concorrência por mensagem (para o Post inicial idempotente e deletes locais)
@@ -76,7 +75,11 @@ public class JavaMessages implements Messages {
         Message failMsg = new Message();
         failMsg.setId(originalMsg.getId() + "." + cleanFailedUser);
         failMsg.setSender(originalMsg.getSender());
-        failMsg.setDestination(java.util.Set.of(senderEmail));
+
+        Set<String> dests = new HashSet<>();
+        dests.add(senderEmail);
+        failMsg.setDestination(dests);
+
         failMsg.setSubject(String.format("FAILED TO SEND %s TO %s: %s", originalMsg.getId(), cleanFailedUser, reason));
         failMsg.setContents(originalMsg.getContents());
         failMsg.setCreationTime(System.currentTimeMillis());
@@ -84,8 +87,25 @@ public class JavaMessages implements Messages {
         return failMsg;
     }
 
+    private void persistFailMessageRobust(Message failMsg) {
+        Object failLock = messageLocks.computeIfAbsent(failMsg.getId(), k -> new Object());
+        synchronized (failLock) {
+            for (int attempt = 0; attempt < MAX_DB_RETRIES; attempt++) {
+                try (TxContext tx = hibernate.beginTx()) {
+                    Message existingFMsg = tx.session().find(Message.class, failMsg.getId());
+                    if (existingFMsg == null) {
+                        hibernate.persistTx(tx, failMsg);
+                    }
+                    tx.commit();
+                    break;
+                } catch (Exception e) {
+                    try { Thread.sleep(50 + (long) (Math.random() * 50)); } catch (InterruptedException ignored) {}
+                }
+            }
+        }
+    }
+
     private void forwardToRemoteDomain(String remoteDomain, Message msg, String pwd) {
-        // Obter uma thread dedicada EXCLUSIVAMENTE a este domínio remoto
         ExecutorService executor = domainExecutors.computeIfAbsent(remoteDomain, k -> Executors.newSingleThreadExecutor());
 
         executor.submit(() -> {
@@ -124,17 +144,7 @@ public class JavaMessages implements Messages {
                     String cleanDest = dest.contains("<") ? dest.substring(dest.indexOf("<") + 1, dest.indexOf(">")) : dest;
                     if (cleanDest.endsWith("@" + remoteDomain)) {
                         Message failMsg = createFailedNotificationObj(msg, cleanDest, "TIMEOUT");
-
-                        Object lock = messageLocks.computeIfAbsent(failMsg.getId(), k -> new Object());
-                        synchronized(lock) {
-                            try (TxContext tx = hibernate.beginTx()) {
-                                Message existing = hibernate.getTx(tx, Message.class, failMsg.getId());
-                                if (existing == null) {
-                                    hibernate.persistTx(tx, failMsg);
-                                }
-                                tx.commit();
-                            } catch (Exception ignored) {}
-                        }
+                        persistFailMessageRobust(failMsg);
                     }
                 }
             }
@@ -160,35 +170,38 @@ public class JavaMessages implements Messages {
         Object msgLock = messageLocks.computeIfAbsent(msg.getId(), k -> new Object());
 
         if (isServerToServer) {
-            synchronized (msgLock) {
-                java.util.List<String> failedDests = new java.util.ArrayList<>();
-                for (String dest : msg.getDestination()) {
-                    String cleanDest = dest.contains("<") ? dest.substring(dest.indexOf("<") + 1, dest.indexOf(">")) : dest;
-                    String[] parts = cleanDest.split("@");
-                    if (parts.length != 2) continue;
+            java.util.List<String> failedDests = new java.util.ArrayList<>();
 
-                    String destName = parts[0];
-                    String destDomain = parts[1];
+            // FIX: As chamadas HTTP não devem bloquear o lock local (Test 12b fix)
+            for (String dest : msg.getDestination()) {
+                String cleanDest = dest.contains("<") ? dest.substring(dest.indexOf("<") + 1, dest.indexOf(">")) : dest;
+                String[] parts = cleanDest.split("@");
+                if (parts.length != 2) continue;
 
-                    if (destDomain.equals(this.domain)) {
-                        Result<List<User>> checkRes = searchUsersRobust(usersClient, destName, "", destName);
-                        if (checkRes == null || !checkRes.isOK()) {
-                            return Result.error(ErrorCode.INTERNAL_ERROR);
-                        }
-                        boolean destExists = checkRes.value() != null && !checkRes.value().isEmpty();
-                        if (!destExists) {
-                            failedDests.add(cleanDest);
-                        }
+                String destName = parts[0];
+                String destDomain = parts[1];
+
+                if (destDomain.equals(this.domain)) {
+                    Result<List<User>> checkRes = searchUsersRobust(usersClient, destName, "", destName);
+                    if (checkRes == null || !checkRes.isOK()) {
+                        return Result.error(ErrorCode.INTERNAL_ERROR);
+                    }
+                    boolean destExists = checkRes.value() != null && !checkRes.value().isEmpty();
+                    if (!destExists) {
+                        failedDests.add(cleanDest);
                     }
                 }
+            }
 
+            synchronized (msgLock) {
                 boolean isPersisted = false;
                 for (int attempt = 0; attempt < MAX_DB_RETRIES; attempt++) {
                     try (TxContext tx = hibernate.beginTx()) {
                         Message existing = tx.session().find(Message.class, msg.getId());
                         if (existing != null) {
                             tx.commit();
-                            return Result.ok(msg.getId());
+                            isPersisted = true;
+                            break;
                         }
 
                         hibernate.persistTx(tx, msg);
@@ -201,29 +214,23 @@ public class JavaMessages implements Messages {
                 }
 
                 if (!isPersisted) return Result.error(ErrorCode.INTERNAL_ERROR);
+            } // Lock released quickly
 
-                if (msg.getSubject() != null && msg.getSubject().startsWith("FAILED TO SEND")) {
-                    return Result.ok(msg.getId());
-                }
-
-                for (String bounceDest : failedDests) {
-                    Message failMsg = createFailedNotificationObj(msg, bounceDest, "UNKNOWN USER");
-                    String originalSenderEmail = failMsg.getDestination().iterator().next();
-                    String originalSenderDomain = originalSenderEmail.split("@")[1];
-
-                    Object failLock = messageLocks.computeIfAbsent(failMsg.getId(), k -> new Object());
-                    synchronized (failLock) {
-                        try (TxContext tx2 = hibernate.beginTx()) {
-                            Message existingFMsg = tx2.session().find(Message.class, failMsg.getId());
-                            if(existingFMsg == null) hibernate.persistTx(tx2, failMsg);
-                            tx2.commit();
-                        } catch(Exception ignored){}
-                    }
-                    forwardToRemoteDomain(originalSenderDomain, failMsg, "");
-                }
-
+            if (msg.getSubject() != null && msg.getSubject().startsWith("FAILED TO SEND")) {
                 return Result.ok(msg.getId());
             }
+
+            for (String bounceDest : failedDests) {
+                Message failMsg = createFailedNotificationObj(msg, bounceDest, "UNKNOWN USER");
+                persistFailMessageRobust(failMsg);
+
+                String originalSenderEmail = failMsg.getDestination().iterator().next();
+                String originalSenderDomain = originalSenderEmail.split("@")[1];
+                forwardToRemoteDomain(originalSenderDomain, failMsg, "");
+            }
+
+            return Result.ok(msg.getId());
+
         } else {
             String senderStr = msg.getSender();
             String senderName = senderStr.contains("@") ? senderStr.split("@")[0] : senderStr;
@@ -283,18 +290,12 @@ public class JavaMessages implements Messages {
                 }
 
                 if (!dbSuccess) return Result.error(ErrorCode.INTERNAL_ERROR);
+            }
 
-                for (String cleanDest : failedDests) {
-                    Message failMsg = createFailedNotificationObj(msg, cleanDest, "UNKNOWN USER");
-                    Object failLock = messageLocks.computeIfAbsent(failMsg.getId(), k -> new Object());
-                    synchronized (failLock) {
-                        try (TxContext tx2 = hibernate.beginTx()) {
-                            Message existingFMsg = tx2.session().find(Message.class, failMsg.getId());
-                            if(existingFMsg == null) hibernate.persistTx(tx2, failMsg);
-                            tx2.commit();
-                        } catch(Exception ignored){}
-                    }
-                }
+            // Não necessita do cadeado para gerar notificações
+            for (String cleanDest : failedDests) {
+                Message failMsg = createFailedNotificationObj(msg, cleanDest, "UNKNOWN USER");
+                persistFailMessageRobust(failMsg);
             }
 
             for (java.util.Map.Entry<String, java.util.List<String>> entry : remoteDomains.entrySet()) {
@@ -407,7 +408,8 @@ public class JavaMessages implements Messages {
         synchronized(msgLock) {
             for (int attempt = 0; attempt < MAX_DB_RETRIES; attempt++) {
                 try (TxContext tx = hibernate.beginTx()) {
-                    Message msg = tx.session().find(Message.class, mid, LockModeType.PESSIMISTIC_WRITE);
+                    // FIX: Removido o LockModeType.PESSIMISTIC_WRITE. O msgLock já é o suficiente para isolar a BD local.
+                    Message msg = tx.session().find(Message.class, mid);
                     if (msg == null ) {
                         tx.commit();
                         return Result.error(ErrorCode.NOT_FOUND);
@@ -465,7 +467,8 @@ public class JavaMessages implements Messages {
         synchronized(msgLock) {
             for (int attempt = 0; attempt < MAX_DB_RETRIES; attempt++) {
                 try (TxContext tx = hibernate.beginTx()) {
-                    Message msg = tx.session().find(Message.class, mid, LockModeType.PESSIMISTIC_WRITE);
+                    // FIX: Removido LockModeType.PESSIMISTIC_WRITE
+                    Message msg = tx.session().find(Message.class, mid);
                     if (msg == null) {
                         tx.commit();
                         return Result.ok();
@@ -507,7 +510,6 @@ public class JavaMessages implements Messages {
 
         if (dbSuccess) {
             for (String dDomain : domainsToForward) {
-                // AQUI TAMBÉM: Reverter para a fila certa por Domínio.
                 ExecutorService executor = domainExecutors.computeIfAbsent(dDomain, k -> Executors.newSingleThreadExecutor());
 
                 executor.submit(() -> {
