@@ -109,7 +109,6 @@ public class Discovery {
         for (;;) {
             List<URI> res = discoveredUris.get(serviceName);
             if (res != null && res.size() >= minReplies) {
-                // FIX: O .toArray() sobre Listas Sincronizadas obriga a este bloco lock!
                 synchronized (res) {
                     return res.toArray(new URI[0]);
                 }

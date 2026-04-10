@@ -30,7 +30,6 @@ public class TxContext implements AutoCloseable {
 
     @Override
     public void close() {
-        // Se a transação ainda estiver ativa quando fecha (ex: ocorreu um erro e não houve commit), faz rollback
         if (tx != null && tx.isActive()) {
             tx.rollback();
         }

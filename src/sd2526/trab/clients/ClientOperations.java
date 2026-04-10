@@ -11,7 +11,6 @@ import io.grpc.Status;
 public class ClientOperations {
     private static Logger Log = Logger.getLogger(ClientOperations.class.getName());
 
-    // FIX: Baixados os limites. 10 retries a 5s davam 50s.
     protected static final int MAX_RETRIES = 5;
     protected static final int READ_TIMEOUT = 10000;
     protected static final int RETRY_SLEEP = 1000;
@@ -90,7 +89,7 @@ public class ClientOperations {
 
     public static ErrorCode getErrorCodeFrom(int status) {
         return switch (status) {
-            case 200, 204, 209 -> ErrorCode.OK; // FIX: Adicionado 204 (NO_CONTENT) que é vital para Deletes REST
+            case 200, 204, 209 -> ErrorCode.OK;
             case 409 -> ErrorCode.CONFLICT;
             case 403 -> ErrorCode.FORBIDDEN;
             case 404 -> ErrorCode.NOT_FOUND;

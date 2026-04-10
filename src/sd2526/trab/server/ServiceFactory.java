@@ -4,15 +4,12 @@ import java.net.URI;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import sd2526.trab.clients.MessagesClient;
-import sd2526.trab.clients.UsersClient;
-import sd2526.trab.clients.grpc.GrpcMessagesClient;
-import sd2526.trab.clients.grpc.GrpcUsersClient;
-import sd2526.trab.clients.rest.RestUsersClient;
-import sd2526.trab.clients.rest.RestMessagesClient;
-// Se já tiveres os gRPC, importa-os aqui:
-// import sd2526.trab.clients.grpc.GrpcUsersClient;
-// import sd2526.trab.clients.grpc.GrpcMessagesClient;
+import sd2526.trab.clients.messages.grpc.GrpcMessagesClient;
+import sd2526.trab.clients.messages.java.MessagesClient;
+import sd2526.trab.clients.users.grpc.GrpcUsersClient;
+import sd2526.trab.clients.users.java.UsersClient;
+import sd2526.trab.clients.users.rest.RestUsersClient;
+import sd2526.trab.clients.messages.rest.RestMessagesClient;
 
 public class ServiceFactory {
     private static ServiceFactory instance;
